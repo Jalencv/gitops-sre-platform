@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sre-platform-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sre-platform-app
+  template:
+    metadata:
+      labels:
+        app: sre-platform-app
+    spec:
+      containers:
+      - name: app
+        image: 289064655230.dkr.ecr.us-east-1.amazonaws.com/sre-platform-app:latest
+        ports:
+        - containerPort: 3000
