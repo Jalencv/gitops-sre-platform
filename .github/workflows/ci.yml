@@ -53,7 +53,9 @@ jobs:
           exit-code: 1             # FAIL the pipeline on critical findings
           severity: CRITICAL,HIGH  # Block on CRITICAL and HIGH CVEs
           ignore-unfixed: true     # Only fail on CVEs with available fixes
- 
+          trivyignores: .trivyignore
+
+          
       # Step 6: Push to ECR (only runs if scan passed)
       - name: Push image to ECR
         env:
