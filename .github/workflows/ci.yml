@@ -1,0 +1,78 @@
+# .github/workflows/ci.yml
+ 
+name: CI — Build, Scan, Push
+ 
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+ 
+env:
+  ECR_REPOSITORY: sre-platform-app
+  AWS_REGION: us-east-1
+ 
+jobs:
+  build-scan-push:
+    runs-on: ubuntu-latest
+ 
+    steps:
+      # Step 1: Check out the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+ 
+      # Step 2: Log into AWS
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+ 
+      # Step 3: Log into ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+ 
+      # Step 4: Build the Docker image
+      - name: Build Docker image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t ${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag ${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:$IMAGE_TAG \
+            ${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:latest
+ 
+      # Step 5: SECURITY SCAN with Trivy (your Anchore equivalent)
+      # This is a HARD GATE — critical CVEs fail the pipeline
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          format: table
+          exit-code: 1             # FAIL the pipeline on critical findings
+          severity: CRITICAL,HIGH  # Block on CRITICAL and HIGH CVEs
+          ignore-unfixed: true     # Only fail on CVEs with available fixes
+ 
+      # Step 6: Push to ECR (only runs if scan passed)
+      - name: Push image to ECR
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker push ${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push ${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:latest
+          echo 'image=${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:$IMAGE_TAG' >> $GITHUB_OUTPUT
+ 
+      # Step 7: Update the K8s manifest with the new image tag
+      # ArgoCD detects this Git change and deploys automatically
+      - name: Update Kubernetes manifest
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          sed -i 's|image: .*|image: ${{ secrets.ECR_REGISTRY }}/$ECR_REPOSITORY:'$IMAGE_TAG'|' \
+            k8s/overlays/dev/deployment.yaml
+          git config user.email 'ci@sre-platform.com'
+          git config user.name 'GitHub Actions'
+          git add k8s/overlays/dev/deployment.yaml
+          git commit -m 'ci: update image to '$IMAGE_TAG
+          git push
